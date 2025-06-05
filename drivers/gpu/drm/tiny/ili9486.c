@@ -33,6 +33,7 @@
 #define ILI9486_MADCTL_MV       BIT(5)
 #define ILI9486_MADCTL_MX       BIT(6)
 #define ILI9486_MADCTL_MY       BIT(7)
+#define BPW                     8
 
 /*
  * The PiScreen/waveshare rpi-lcd-35 has a SPI to 16-bit parallel bus converter
@@ -43,51 +44,22 @@ static int waveshare_command(struct mipi_dbi *mipi, u8 *cmd, u8 *par,
 			     size_t num)
 {
 	struct spi_device *spi = mipi->spi;
-	unsigned int bpw = 8;
-	void *data = par;
 	u32 speed_hz;
-	int i, ret;
-	__be16 *buf;
+	int ret;
 
-	buf = kmalloc(32 * sizeof(u16), GFP_KERNEL);
-	if (!buf)
-		return -ENOMEM;
-
-	/*
-	 * The displays are Raspberry Pi HATs and connected to the 8-bit only
-	 * SPI controller, so 16-bit command and parameters need byte swapping
-	 * before being transferred as 8-bit on the big endian SPI bus.
-	 */
-	buf[0] = cpu_to_be16(*cmd);
 	spi_bus_lock(spi->controller);
 	gpiod_set_value_cansleep(mipi->dc, 0);
-	speed_hz = mipi_dbi_spi_cmd_max_speed(spi, 2);
-	ret = mipi_dbi_spi_transfer(spi, speed_hz, 8, buf, 2);
+	speed_hz = mipi_dbi_spi_cmd_max_speed(spi, 1);
+	ret = mipi_dbi_spi_transfer(spi, speed_hz, BPW, cmd, 1);
 	spi_bus_unlock(spi->controller);
 	if (ret || !num)
-		goto free;
-
-	/* 8-bit configuration data, not 16-bit pixel data */
-	if (num <= 32) {
-		for (i = 0; i < num; i++)
-			buf[i] = cpu_to_be16(par[i]);
-		num *= 2;
-		data = buf;
-	}
-
-	/*
-	 * Check whether pixel data bytes needs to be swapped or not
-	 */
-	if (*cmd == MIPI_DCS_WRITE_MEMORY_START && !mipi->swap_bytes)
-		bpw = 16;
+	    return ret;
 
 	spi_bus_lock(spi->controller);
 	gpiod_set_value_cansleep(mipi->dc, 1);
 	speed_hz = mipi_dbi_spi_cmd_max_speed(spi, num);
-	ret = mipi_dbi_spi_transfer(spi, speed_hz, bpw, data, num);
+	ret = mipi_dbi_spi_transfer(spi, speed_hz, BPW, par, num);
 	spi_bus_unlock(spi->controller);
- free:
-	kfree(buf);
 
 	return ret;
 }
